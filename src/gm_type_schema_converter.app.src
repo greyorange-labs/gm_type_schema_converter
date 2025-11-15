@@ -1,0 +1,13 @@
+{application, gm_type_schema_converter, [
+    {description, "Erlang library for converting Erlang type definitions to JSON Schema format. Shared between OpenAPI documentation generation and runtime schema validation."},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {applications, [
+        kernel,
+        stdlib
+    ]},
+    {env, []},
+    {modules, []},
+    {licenses, ["Apache-2.0"]},
+    {links, []}
+ ]}.
