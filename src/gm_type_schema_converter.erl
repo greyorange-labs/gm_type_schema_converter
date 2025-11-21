@@ -135,6 +135,14 @@ convert_type_definition({type, _Line, map, Fields}, AllTypes, Visited) when is_l
 convert_type_definition({type, _Line, map, any}, _AllTypes, _Visited) ->
     #{<<"type">> => <<"object">>};
 
+%% Integer range: 0..150 (native Erlang syntax)
+convert_type_definition({type, _Line, range, [{integer, _, Min}, {integer, _, Max}]}, _AllTypes, _Visited) ->
+    #{
+        <<"type">> => <<"integer">>,
+        <<"minimum">> => Min,
+        <<"maximum">> => Max
+    };
+
 %% Primitive types
 convert_type_definition({type, _Line, binary, []}, _AllTypes, _Visited) ->
     #{<<"type">> => <<"string">>};
@@ -173,6 +181,116 @@ convert_type_definition({user_type, _Line, TypeName, []}, AllTypes, _Visited) ->
             SchemaName = capitalize_type_name(TypeName),
             #{<<"$ref">> => <<"#/components/schemas/", SchemaName/binary>>}
     end;
+
+%% anyOf required constraint: {any_of_required, [Key1, Key2, ...], BaseMapType}
+%% Generates JSON Schema with anyOf array requiring at least one of the specified keys
+convert_type_definition(
+    {type, _Line, tuple, [
+        {atom, _, any_of_required},
+        KeyListAST,
+        BaseMapType
+    ]},
+    AllTypes,
+    Visited
+) ->
+    %% Extract list of required keys from AST
+    RequiredKeys = extract_keys_from_list(KeyListAST),
+
+    %% Convert base map type to JSON Schema
+    BaseSchema = convert_type_definition(BaseMapType, AllTypes, Visited),
+
+    %% Generate anyOf array with per-key required schemas
+    AnyOfSchemas = generate_any_of_required_schemas(RequiredKeys),
+
+    %% Add anyOf to base schema
+    BaseSchema#{<<"anyOf">> => AnyOfSchemas};
+
+%% Float constraints wrapper: {float_with_constraints, ConstraintsMap}
+convert_type_definition(
+    {type, _Line, tuple, [
+        {atom, _, float_with_constraints},
+        ConstraintsMapAST
+    ]},
+    AllTypes,
+    Visited
+) ->
+    BaseSchema = #{<<"type">> => <<"number">>},
+    Constraints = extract_constraint_map(ConstraintsMapAST, AllTypes, Visited),
+    add_numeric_constraints(BaseSchema, Constraints);
+
+%% String constraints wrapper: {binary_with_constraints, ConstraintsMap}
+convert_type_definition(
+    {type, _Line, tuple, [
+        {atom, _, binary_with_constraints},
+        ConstraintsMapAST
+    ]},
+    AllTypes,
+    Visited
+) ->
+    BaseSchema = #{<<"type">> => <<"string">>},
+    Constraints = extract_constraint_map(ConstraintsMapAST, AllTypes, Visited),
+    add_string_constraints(BaseSchema, Constraints);
+
+%% Array constraints wrapper: {list_with_constraints, ItemType, ConstraintsMap}
+convert_type_definition(
+    {type, _Line, tuple, [
+        {atom, _, list_with_constraints},
+        ItemType,
+        ConstraintsMapAST
+    ]},
+    AllTypes,
+    Visited
+) ->
+    ItemsSchema = convert_type_definition(ItemType, AllTypes, Visited),
+    BaseSchema = #{
+        <<"type">> => <<"array">>,
+        <<"items">> => ItemsSchema
+    },
+    Constraints = extract_constraint_map(ConstraintsMapAST, AllTypes, Visited),
+    add_array_constraints(BaseSchema, Constraints);
+
+%% Object constraints wrapper: {map_with_constraints, ConstraintsMap, BaseMapType}
+convert_type_definition(
+    {type, _Line, tuple, [
+        {atom, _, map_with_constraints},
+        ConstraintsMapAST,
+        BaseMapType
+    ]},
+    AllTypes,
+    Visited
+) ->
+    BaseSchema = convert_type_definition(BaseMapType, AllTypes, Visited),
+    Constraints = extract_constraint_map(ConstraintsMapAST, AllTypes, Visited),
+    add_object_constraints(BaseSchema, Constraints);
+
+%% allOf required constraint: {all_of_required, {Key1, Key2, ...}, BaseMapType}
+convert_type_definition(
+    {type, _Line, tuple, [
+        {atom, _, all_of_required},
+        KeyTuple,
+        BaseMapType
+    ]},
+    AllTypes,
+    Visited
+) ->
+    RequiredKeys = extract_keys_from_list(KeyTuple),
+    BaseSchema = convert_type_definition(BaseMapType, AllTypes, Visited),
+    AllOfSchemas = generate_all_of_required_schemas(RequiredKeys),
+    BaseSchema#{<<"allOf">> => AllOfSchemas};
+
+%% not constraint: {not_constraint, BaseType, NegatedSchemaAST}
+convert_type_definition(
+    {type, _Line, tuple, [
+        {atom, _, not_constraint},
+        BaseType,
+        NegatedSchemaAST
+    ]},
+    AllTypes,
+    Visited
+) ->
+    BaseSchema = convert_type_definition(BaseType, AllTypes, Visited),
+    NegatedSchema = convert_type_definition(NegatedSchemaAST, AllTypes, Visited),
+    BaseSchema#{<<"not">> => NegatedSchema};
 
 %% Fallback for unknown types
 convert_type_definition(_Other, _AllTypes, _Visited) ->
@@ -272,3 +390,243 @@ capitalize_word([]) ->
     [];
 capitalize_word([First | Rest]) ->
     [string:to_upper(First) | Rest].
+
+%% @doc Extract atom keys from list or tuple AST
+%% Handles Erlang abstract format for lists: {cons, Line, Head, Tail} or {nil, Line}
+%% Also handles tuple format: {tuple, Line, [atom1, atom2, ...]}
+-spec extract_keys_from_list(erl_parse:abstract_form()) -> [atom()].
+extract_keys_from_list({cons, _Line, {atom, _, Key}, Rest}) ->
+    [Key | extract_keys_from_list(Rest)];
+extract_keys_from_list({nil, _Line}) ->
+    [];
+extract_keys_from_list({tuple, _Line, Elements}) ->
+    %% Handle tuple format: {module_name, function_name, process_name}
+    lists:map(
+        fun({atom, _, Key}) -> Key;
+           (Other) -> error({invalid_key_in_tuple, Other})
+        end,
+        Elements
+    );
+extract_keys_from_list({type, _Line, list, [{type, _Line2, union, Types}]}) ->
+    %% Handle union type in list: [module_name | function_name | process_name]
+    %% Extract atoms from union
+    lists:map(
+        fun({user_type, _, TypeName, []}) -> TypeName;
+           ({atom, _, Atom}) -> Atom;
+           (Other) -> error({invalid_union_type, Other})
+        end,
+        Types
+    );
+extract_keys_from_list(Other) ->
+    error({invalid_key_list, Other}).
+
+%% @doc Generate anyOf array with per-key required schemas
+%% Each subschema requires exactly one of the specified keys
+-spec generate_any_of_required_schemas([atom()]) -> [json_schema()].
+generate_any_of_required_schemas(Keys) ->
+    lists:map(
+        fun(Key) ->
+            KeyBinary = atom_to_binary(Key, utf8),
+            #{<<"required">> => [KeyBinary]}
+        end,
+        Keys
+    ).
+
+%% @doc Generate allOf array with per-key required schemas
+%% Each subschema requires one of the specified keys (all must be present)
+-spec generate_all_of_required_schemas([atom()]) -> [json_schema()].
+generate_all_of_required_schemas(Keys) ->
+    lists:map(
+        fun(Key) ->
+            KeyBinary = atom_to_binary(Key, utf8),
+            #{<<"required">> => [KeyBinary]}
+        end,
+        Keys
+    ).
+
+%% @doc Extract constraint map from AST
+-spec extract_constraint_map(erl_parse:abstract_type(), [type_def()], [atom()]) -> map().
+extract_constraint_map({type, _Line, map, Fields}, _AllTypes, _Visited) ->
+    lists:foldl(
+        fun(Field, Acc) ->
+            case Field of
+                {type, _, map_field_assoc, [{atom, _, Key}, ValueAST]} ->
+                    Value = extract_constraint_value_from_ast(ValueAST),
+                    Acc#{Key => Value};
+                {type, _, map_field_exact, [{atom, _, Key}, ValueAST]} ->
+                    Value = extract_constraint_value_from_ast(ValueAST),
+                    Acc#{Key => Value};
+                _ ->
+                    Acc
+            end
+        end,
+        #{},
+        Fields
+    );
+extract_constraint_map(_Other, _AllTypes, _Visited) ->
+    #{}.
+
+%% @doc Extract constraint value from AST
+-spec extract_constraint_value_from_ast(erl_parse:abstract_type()) -> term().
+extract_constraint_value_from_ast({integer, _, Value}) ->
+    Value;
+extract_constraint_value_from_ast({float, _, Value}) ->
+    Value;
+extract_constraint_value_from_ast({atom, _, Value}) ->
+    Value;
+extract_constraint_value_from_ast({bin, _, Elements}) ->
+    extract_binary_value(Elements);
+extract_constraint_value_from_ast({string, _, Value}) ->
+    list_to_binary(Value);
+extract_constraint_value_from_ast(Other) ->
+    %% For complex types (like schemas for contains, propertyNames), return the AST
+    Other.
+
+%% @doc Extract binary value from binary AST elements
+-spec extract_binary_value([term()]) -> binary().
+extract_binary_value(Elements) ->
+    lists:foldl(
+        fun(Element, Acc) ->
+            case Element of
+                {bin_element, _, {string, _, String}, _, _} ->
+                    <<Acc/binary, (list_to_binary(String))/binary>>;
+                {bin_element, _, {integer, _, Int}, _, _} ->
+                    <<Acc/binary, Int:8>>;
+                {bin_element, _, Value, _, _} when is_binary(Value) ->
+                    <<Acc/binary, Value/binary>>;
+                _ ->
+                    Acc
+            end
+        end,
+        <<>>,
+        Elements
+    ).
+
+%% @doc Add numeric constraints to schema (for floats)
+-spec add_numeric_constraints(json_schema(), map()) -> json_schema().
+add_numeric_constraints(Schema, Constraints) ->
+    lists:foldl(
+        fun({Key, Value}, Acc) ->
+            case Key of
+                minimum -> Acc#{<<"minimum">> => Value};
+                maximum -> Acc#{<<"maximum">> => Value};
+                exclusive_minimum -> Acc#{<<"exclusiveMinimum">> => Value};
+                exclusive_maximum -> Acc#{<<"exclusiveMaximum">> => Value};
+                multiple_of -> Acc#{<<"multipleOf">> => Value};
+                _ -> Acc
+            end
+        end,
+        Schema,
+        maps:to_list(Constraints)
+    ).
+
+%% @doc Add string constraints to schema
+-spec add_string_constraints(json_schema(), map()) -> json_schema().
+add_string_constraints(Schema, Constraints) ->
+    lists:foldl(
+        fun({Key, Value}, Acc) ->
+            case Key of
+                min_length -> Acc#{<<"minLength">> => Value};
+                max_length -> Acc#{<<"maxLength">> => Value};
+                pattern ->
+                    Pattern = case is_binary(Value) of
+                        true -> binary_to_list(Value);
+                        false -> Value
+                    end,
+                    Acc#{<<"pattern">> => list_to_binary(Pattern)};
+                format ->
+                    Format = case is_binary(Value) of
+                        true -> binary_to_list(Value);
+                        false -> Value
+                    end,
+                    Acc#{<<"format">> => list_to_binary(Format)};
+                _ -> Acc
+            end
+        end,
+        Schema,
+        maps:to_list(Constraints)
+    ).
+
+%% @doc Add array constraints to schema
+-spec add_array_constraints(json_schema(), map()) -> json_schema().
+add_array_constraints(Schema, Constraints) ->
+    lists:foldl(
+        fun({Key, Value}, Acc) ->
+            case Key of
+                min_items -> Acc#{<<"minItems">> => Value};
+                max_items -> Acc#{<<"maxItems">> => Value};
+                unique_items -> Acc#{<<"uniqueItems">> => Value};
+                contains ->
+                    %% Value should be a schema AST, convert it
+                    ContainsSchema = convert_type_definition(Value, [], []),
+                    Acc#{<<"contains">> => ContainsSchema};
+                _ -> Acc
+            end
+        end,
+        Schema,
+        maps:to_list(Constraints)
+    ).
+
+%% @doc Add object constraints to schema
+-spec add_object_constraints(json_schema(), map()) -> json_schema().
+add_object_constraints(Schema, Constraints) ->
+    lists:foldl(
+        fun({Key, Value}, Acc) ->
+            case Key of
+                min_properties -> Acc#{<<"minProperties">> => Value};
+                max_properties -> Acc#{<<"maxProperties">> => Value};
+                property_names ->
+                    PropNamesSchema = convert_type_definition(Value, [], []),
+                    Acc#{<<"propertyNames">> => PropNamesSchema};
+                pattern_properties ->
+                    PatternProps = convert_pattern_properties(Value),
+                    Acc#{<<"patternProperties">> => PatternProps};
+                dependencies ->
+                    Deps = convert_dependencies(Value),
+                    Acc#{<<"dependencies">> => Deps};
+                _ -> Acc
+            end
+        end,
+        Schema,
+        maps:to_list(Constraints)
+    ).
+
+%% @doc Convert pattern properties map to JSON Schema format
+-spec convert_pattern_properties(term()) -> map().
+convert_pattern_properties(PatternProps) when is_map(PatternProps) ->
+    maps:fold(
+        fun(Pattern, SchemaAST, Acc) ->
+            PatternBinary = case is_binary(Pattern) of
+                true -> Pattern;
+                false -> list_to_binary(Pattern)
+            end,
+            Schema = convert_type_definition(SchemaAST, [], []),
+            Acc#{PatternBinary => Schema}
+        end,
+        #{},
+        PatternProps
+    );
+convert_pattern_properties(_Other) ->
+    #{}.
+
+%% @doc Convert dependencies map to JSON Schema format
+-spec convert_dependencies(term()) -> map().
+convert_dependencies(Deps) when is_map(Deps) ->
+    maps:fold(
+        fun(Key, Value, Acc) ->
+            KeyBinary = atom_to_binary(Key, utf8),
+            DepValue = case is_list(Value) of
+                true ->
+                    %% List of required keys
+                    [atom_to_binary(V, utf8) || V <- Value];
+                false ->
+                    %% Schema dependency
+                    convert_type_definition(Value, [], [])
+            end,
+            Acc#{KeyBinary => DepValue}
+        end,
+        #{},
+        Deps
+    );
+convert_dependencies(_Other) ->
+    #{}.

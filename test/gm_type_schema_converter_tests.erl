@@ -20,7 +20,7 @@ capitalize_type_name_multiple_underscores_test() ->
     ?assertEqual(<<"UserProfile">>, gm_type_schema_converter:capitalize_type_name(user_profile)).
 
 capitalize_type_name_complex_test() ->
-    ?assertEqual(<<"DebugLoggingEnableRequest">>, 
+    ?assertEqual(<<"DebugLoggingEnableRequest">>,
         gm_type_schema_converter:capitalize_type_name(debug_logging_enable_request)).
 
 %%%===================================================================
@@ -207,7 +207,7 @@ types_to_schemas_diagnose_infra_request_test() ->
     Schemas = gm_type_schema_converter:types_to_schemas(Types),
     ?assertMatch(#{<<"InfraTestName">> := _}, Schemas),
     ?assertMatch(#{<<"DiagnoseInfraRequest">> := _}, Schemas),
-    
+
     %% Check DiagnoseInfraRequest schema
     RequestSchema = maps:get(<<"DiagnoseInfraRequest">>, Schemas),
     ?assertEqual(<<"object">>, maps:get(<<"type">>, RequestSchema)),
@@ -216,7 +216,7 @@ types_to_schemas_diagnose_infra_request_test() ->
     ?assertEqual(<<"array">>, maps:get(<<"type">>, TestsSchema)),
     ItemsSchema = maps:get(<<"items">>, TestsSchema),
     ?assertMatch(#{<<"$ref">> := <<"#/components/schemas/InfraTestName">>}, ItemsSchema),
-    
+
     %% Check required field
     Required = maps:get(<<"required">>, RequestSchema),
     ?assert(lists:member(<<"tests">>, Required)).
@@ -237,7 +237,7 @@ types_to_schemas_nested_map_test() ->
     Schemas = gm_type_schema_converter:types_to_schemas(Types),
     ?assertMatch(#{<<"Address">> := _}, Schemas),
     ?assertMatch(#{<<"User">> := _}, Schemas),
-    
+
     UserSchema = maps:get(<<"User">>, Schemas),
     Properties = maps:get(<<"properties">>, UserSchema),
     AddressRef = maps:get(<<"address">>, Properties),
@@ -261,4 +261,199 @@ capitalize_type_name_empty_atom_test() ->
     %% Edge case: empty atom (shouldn't happen in practice)
     Result = gm_type_schema_converter:capitalize_type_name(''),
     ?assert(is_binary(Result)).
+
+%%%===================================================================
+%%% Test: Integer Range (Native Erlang Syntax) - Phase 0
+%%%===================================================================
+
+integer_range_test() ->
+    TypeDef = {age, {type, 0, range, [{integer, 0, 0}, {integer, 0, 150}]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"integer">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(0, maps:get(<<"minimum">>, Schema)),
+    ?assertEqual(150, maps:get(<<"maximum">>, Schema)).
+
+integer_range_port_test() ->
+    TypeDef = {port, {type, 0, range, [{integer, 0, 1024}, {integer, 0, 65535}]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"integer">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(1024, maps:get(<<"minimum">>, Schema)),
+    ?assertEqual(65535, maps:get(<<"maximum">>, Schema)).
+
+%%%===================================================================
+%%% Test: Float Constraints (Wrapper Syntax) - Phase 1
+%%%===================================================================
+
+float_constraints_test() ->
+    TypeDef = {price,
+        {type, 0, tuple, [
+            {atom, 0, float_with_constraints},
+            {type, 0, map, [
+                {type, 0, map_field_assoc, [{atom, 0, minimum}, {float, 0, 0.0}]},
+                {type, 0, map_field_assoc, [{atom, 0, maximum}, {float, 0, 1000.0}]},
+                {type, 0, map_field_assoc, [{atom, 0, multiple_of}, {float, 0, 0.01}]}
+            ]}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"number">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(0.0, maps:get(<<"minimum">>, Schema)),
+    ?assertEqual(1000.0, maps:get(<<"maximum">>, Schema)),
+    ?assertEqual(0.01, maps:get(<<"multipleOf">>, Schema)).
+
+float_constraints_exclusive_test() ->
+    TypeDef = {positive_float,
+        {type, 0, tuple, [
+            {atom, 0, float_with_constraints},
+            {type, 0, map, [
+                {type, 0, map_field_assoc, [{atom, 0, exclusive_minimum}, {atom, 0, true}]}
+            ]}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"number">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(true, maps:get(<<"exclusiveMinimum">>, Schema)).
+
+%%%===================================================================
+%%% Test: String Constraints (Wrapper Syntax) - Phase 1
+%%%===================================================================
+
+string_constraints_test() ->
+    TypeDef = {username,
+        {type, 0, tuple, [
+            {atom, 0, binary_with_constraints},
+            {type, 0, map, [
+                {type, 0, map_field_assoc, [{atom, 0, min_length}, {integer, 0, 3}]},
+                {type, 0, map_field_assoc, [{atom, 0, max_length}, {integer, 0, 32}]},
+                {type, 0, map_field_assoc, [{atom, 0, pattern}, {bin, 0, [{bin_element, 0, {string, 0, "^[a-zA-Z0-9_-]+$"}, default, default}]}]}
+            ]}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"string">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(3, maps:get(<<"minLength">>, Schema)),
+    ?assertEqual(32, maps:get(<<"maxLength">>, Schema)),
+    ?assertEqual(<<"^[a-zA-Z0-9_-]+$">>, maps:get(<<"pattern">>, Schema)).
+
+string_constraints_format_test() ->
+    TypeDef = {email,
+        {type, 0, tuple, [
+            {atom, 0, binary_with_constraints},
+            {type, 0, map, [
+                {type, 0, map_field_assoc, [{atom, 0, format}, {bin, 0, [{bin_element, 0, {string, 0, "email"}, default, default}]}]}
+            ]}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"string">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(<<"email">>, maps:get(<<"format">>, Schema)).
+
+%%%===================================================================
+%%% Test: Array Constraints (Wrapper Syntax) - Phase 1
+%%%===================================================================
+
+array_constraints_test() ->
+    TypeDef = {tags,
+        {type, 0, tuple, [
+            {atom, 0, list_with_constraints},
+            {type, 0, binary, []},
+            {type, 0, map, [
+                {type, 0, map_field_assoc, [{atom, 0, min_items}, {integer, 0, 1}]},
+                {type, 0, map_field_assoc, [{atom, 0, max_items}, {integer, 0, 20}]},
+                {type, 0, map_field_assoc, [{atom, 0, unique_items}, {atom, 0, true}]}
+            ]}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"array">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(#{<<"type">> => <<"string">>}, maps:get(<<"items">>, Schema)),
+    ?assertEqual(1, maps:get(<<"minItems">>, Schema)),
+    ?assertEqual(20, maps:get(<<"maxItems">>, Schema)),
+    ?assertEqual(true, maps:get(<<"uniqueItems">>, Schema)).
+
+%%%===================================================================
+%%% Test: Object Constraints (Wrapper Syntax) - Phase 1
+%%%===================================================================
+
+object_constraints_test() ->
+    TypeDef = {config,
+        {type, 0, tuple, [
+            {atom, 0, map_with_constraints},
+            {type, 0, map, [
+                {type, 0, map_field_assoc, [{atom, 0, min_properties}, {integer, 0, 1}]},
+                {type, 0, map_field_assoc, [{atom, 0, max_properties}, {integer, 0, 10}]}
+            ]},
+            {type, 0, map, [
+                {type, 0, map_field_assoc, [{atom, 0, key1}, {type, 0, binary, []}]},
+                {type, 0, map_field_assoc, [{atom, 0, key2}, {type, 0, integer, []}]}
+            ]}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"object">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(1, maps:get(<<"minProperties">>, Schema)),
+    ?assertEqual(10, maps:get(<<"maxProperties">>, Schema)),
+    ?assertMatch(#{<<"key1">> := _}, maps:get(<<"properties">>, Schema)),
+    ?assertMatch(#{<<"key2">> := _}, maps:get(<<"properties">>, Schema)).
+
+%%%===================================================================
+%%% Test: Composition Keywords (allOf, not) - Phase 1
+%%%===================================================================
+
+all_of_required_test() ->
+    TypeDef = {complete_profile,
+        {type, 0, tuple, [
+            {atom, 0, all_of_required},
+            {tuple, 0, [{atom, 0, name}, {atom, 0, email}]},
+            {type, 0, map, [
+                {type, 0, map_field_assoc, [{atom, 0, name}, {type, 0, binary, []}]},
+                {type, 0, map_field_assoc, [{atom, 0, email}, {type, 0, binary, []}]},
+                {type, 0, map_field_assoc, [{atom, 0, phone}, {type, 0, binary, []}]}
+            ]}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"object">>, maps:get(<<"type">>, Schema)),
+    ?assertMatch(#{<<"allOf">> := _}, Schema),
+    AllOf = maps:get(<<"allOf">>, Schema),
+    ?assertEqual(2, length(AllOf)),
+    %% Check that each allOf entry requires one of the keys
+    [First | _] = AllOf,
+    ?assertMatch(#{<<"required">> := _}, First).
+
+not_constraint_test() ->
+    %% Test not constraint - string that is not empty
+    TypeDef = {non_empty_string,
+        {type, 0, tuple, [
+            {atom, 0, not_constraint},
+            {type, 0, binary, []},
+            %% Negated schema: empty string enum
+            {type, 0, map, [
+                {type, 0, map_field_assoc, [{atom, 0, type}, {bin, 0, [{bin_element, 0, {string, 0, "string"}, default, default}]}]},
+                {type, 0, map_field_assoc, [{atom, 0, enum},
+                    {type, 0, list, [
+                        {bin, 0, [{bin_element, 0, {string, 0, ""}, default, default}]}
+                    ]}
+                ]}
+            ]}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"string">>, maps:get(<<"type">>, Schema)),
+    ?assertMatch(#{<<"not">> := _}, Schema),
+    NotSchema = maps:get(<<"not">>, Schema),
+    %% The negated schema should be an object with type and enum
+    ?assertMatch(#{<<"type">> := _}, NotSchema).
+
+%%%===================================================================
+%%% Test: Integration - Using constraints in request types
+%%%===================================================================
+
+types_to_schemas_with_range_test() ->
+    Types = [
+        {age, {type, 1, range, [{integer, 1, 0}, {integer, 1, 150}]}},
+        {user,
+            {type, 1, map, [
+                {type, 1, map_field_exact, [{atom, 1, name}, {type, 1, binary, []}]},
+                {type, 1, map_field_exact, [{atom, 1, age}, {user_type, 1, age, []}]}
+            ]}}
+    ],
+    Schemas = gm_type_schema_converter:types_to_schemas(Types),
+    ?assertMatch(#{<<"Age">> := _}, Schemas),
+    ?assertMatch(#{<<"User">> := _}, Schemas),
+    AgeSchema = maps:get(<<"Age">>, Schemas),
+    ?assertEqual(0, maps:get(<<"minimum">>, AgeSchema)),
+    ?assertEqual(150, maps:get(<<"maximum">>, AgeSchema)).
 
