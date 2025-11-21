@@ -407,6 +407,15 @@ extract_keys_from_list({tuple, _Line, Elements}) ->
         end,
         Elements
     );
+extract_keys_from_list({type, _Line, tuple, Elements}) ->
+    %% Handle type-wrapped tuple format: {type, Line, tuple, [...]}
+    %% This occurs when tuple is part of a type definition
+    lists:map(
+        fun({atom, _, Key}) -> Key;
+           (Other) -> error({invalid_key_in_tuple, Other})
+        end,
+        Elements
+    );
 extract_keys_from_list({type, _Line, list, [{type, _Line2, union, Types}]}) ->
     %% Handle union type in list: [module_name | function_name | process_name]
     %% Extract atoms from union
