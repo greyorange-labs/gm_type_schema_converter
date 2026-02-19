@@ -98,11 +98,40 @@ type_to_schema_list_test() ->
 %%% Test: type_to_schema/2 - Union Types
 %%%===================================================================
 
-type_to_schema_union_test() ->
+type_to_schema_union_atoms_enum_test() ->
+    %% All-atom union should collapse to a single enum
     TypeDef = {status,
         {type, 1, union, [
             {atom, 1, active},
             {atom, 1, inactive}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"string">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual([<<"active">>, <<"inactive">>], maps:get(<<"enum">>, Schema)).
+
+type_to_schema_union_mixed_test() ->
+    %% Mixed union: atoms collapsed into one enum + other types
+    TypeDef = {value,
+        {type, 1, union, [
+            {atom, 1, null},
+            {atom, 1, undefined},
+            {type, 1, binary, []}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertMatch(#{<<"oneOf">> := _}, Schema),
+    OneOf = maps:get(<<"oneOf">>, Schema),
+    ?assertEqual(2, length(OneOf)),
+    %% First should be the collapsed atom enum
+    [AtomEnum | _] = OneOf,
+    ?assertEqual(<<"string">>, maps:get(<<"type">>, AtomEnum)),
+    ?assertEqual([<<"null">>, <<"undefined">>], maps:get(<<"enum">>, AtomEnum)).
+
+type_to_schema_union_single_atom_mixed_test() ->
+    %% Single atom in mixed union - no collapse (stays oneOf)
+    TypeDef = {opt,
+        {type, 1, union, [
+            {atom, 1, none},
+            {type, 1, integer, []}
         ]}},
     Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
     ?assertMatch(#{<<"oneOf">> := _}, Schema),
@@ -456,4 +485,325 @@ types_to_schemas_with_range_test() ->
     AgeSchema = maps:get(<<"Age">>, Schemas),
     ?assertEqual(0, maps:get(<<"minimum">>, AgeSchema)),
     ?assertEqual(150, maps:get(<<"maximum">>, AgeSchema)).
+
+%%%===================================================================
+%%% Test: Phase 1 - Built-in Erlang Types
+%%%===================================================================
+
+non_neg_integer_test() ->
+    TypeDef = {count, {type, 1, non_neg_integer, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"minimum">> => 0}, Schema).
+
+pos_integer_test() ->
+    TypeDef = {id, {type, 1, pos_integer, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"minimum">> => 1}, Schema).
+
+neg_integer_test() ->
+    TypeDef = {offset, {type, 1, neg_integer, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"maximum">> => -1}, Schema).
+
+number_type_test() ->
+    TypeDef = {val, {type, 1, number, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"number">>}, Schema).
+
+nonempty_list_test() ->
+    TypeDef = {items, {type, 1, nonempty_list, [{type, 1, binary, []}]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"array">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(#{<<"type">> => <<"string">>}, maps:get(<<"items">>, Schema)),
+    ?assertEqual(1, maps:get(<<"minItems">>, Schema)).
+
+string_type_test() ->
+    TypeDef = {name, {type, 1, string, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+byte_type_test() ->
+    TypeDef = {b, {type, 1, byte, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"minimum">> => 0, <<"maximum">> => 255}, Schema).
+
+char_type_test() ->
+    TypeDef = {c, {type, 1, char, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"minimum">> => 0, <<"maximum">> => 1114111}, Schema).
+
+arity_type_test() ->
+    TypeDef = {a, {type, 1, arity, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"minimum">> => 0, <<"maximum">> => 255}, Schema).
+
+atom_type_test() ->
+    TypeDef = {a, {type, 1, atom, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+term_type_test() ->
+    TypeDef = {t, {type, 1, term, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{}, Schema).
+
+any_type_test() ->
+    TypeDef = {a, {type, 1, any, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{}, Schema).
+
+timeout_type_test() ->
+    TypeDef = {t, {type, 1, timeout, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertMatch(#{<<"oneOf">> := _}, Schema),
+    OneOf = maps:get(<<"oneOf">>, Schema),
+    ?assertEqual(2, length(OneOf)),
+    [IntSchema, InfSchema] = OneOf,
+    ?assertEqual(<<"integer">>, maps:get(<<"type">>, IntSchema)),
+    ?assertEqual(0, maps:get(<<"minimum">>, IntSchema)),
+    ?assertEqual(<<"string">>, maps:get(<<"type">>, InfSchema)),
+    ?assertEqual([<<"infinity">>], maps:get(<<"enum">>, InfSchema)).
+
+generic_tuple_test() ->
+    TypeDef = {t, {type, 1, tuple, any}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"array">>}, Schema).
+
+specific_tuple_test() ->
+    %% {binary(), integer()} -> array with fixed length 2
+    TypeDef = {pair, {type, 1, tuple, [
+        {type, 1, binary, []},
+        {type, 1, integer, []}
+    ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"array">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(2, maps:get(<<"minItems">>, Schema)),
+    ?assertEqual(2, maps:get(<<"maxItems">>, Schema)),
+    %% Items should be oneOf since types differ
+    Items = maps:get(<<"items">>, Schema),
+    ?assertMatch(#{<<"oneOf">> := _}, Items).
+
+specific_tuple_same_types_test() ->
+    %% {binary(), binary()} -> array with single items schema
+    TypeDef = {pair, {type, 1, tuple, [
+        {type, 1, binary, []},
+        {type, 1, binary, []}
+    ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"array">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(2, maps:get(<<"minItems">>, Schema)),
+    ?assertEqual(2, maps:get(<<"maxItems">>, Schema)),
+    %% Items should be single schema since types are the same
+    ?assertEqual(#{<<"type">> => <<"string">>}, maps:get(<<"items">>, Schema)).
+
+%%%===================================================================
+%%% Test: Phase 2 - gm_type Format Types
+%%%===================================================================
+
+gm_type_date_test() ->
+    TypeDef = {d, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, date}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"format">> => <<"date">>}, Schema).
+
+gm_type_datetime_test() ->
+    TypeDef = {d, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, datetime}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"format">> => <<"date-time">>}, Schema).
+
+gm_type_email_test() ->
+    TypeDef = {e, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, email}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"format">> => <<"email">>}, Schema).
+
+gm_type_uri_test() ->
+    TypeDef = {u, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, uri}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"format">> => <<"uri">>}, Schema).
+
+gm_type_uuid_test() ->
+    TypeDef = {u, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, uuid}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"format">> => <<"uuid">>}, Schema).
+
+gm_type_ipv4_test() ->
+    TypeDef = {i, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, ipv4}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"format">> => <<"ipv4">>}, Schema).
+
+gm_type_ipv6_test() ->
+    TypeDef = {i, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, ipv6}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"format">> => <<"ipv6">>}, Schema).
+
+gm_type_password_test() ->
+    TypeDef = {p, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, password}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"format">> => <<"password">>}, Schema).
+
+gm_type_base64_test() ->
+    TypeDef = {b, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, base64}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"format">> => <<"byte">>}, Schema).
+
+gm_type_hostname_test() ->
+    TypeDef = {h, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, hostname}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"format">> => <<"hostname">>}, Schema).
+
+gm_type_int32_test() ->
+    TypeDef = {i, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, int32}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"format">> => <<"int32">>}, Schema).
+
+gm_type_int64_test() ->
+    TypeDef = {i, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, int64}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"format">> => <<"int64">>}, Schema).
+
+gm_type_double_test() ->
+    TypeDef = {d, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, double}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"number">>, <<"format">> => <<"double">>}, Schema).
+
+gm_type_nullable_test() ->
+    %% gm_type:nullable(binary()) -> oneOf: [{type: string}, {type: null}]
+    TypeDef = {n, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, nullable}, [{type, 1, binary, []}]]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertMatch(#{<<"oneOf">> := _}, Schema),
+    OneOf = maps:get(<<"oneOf">>, Schema),
+    ?assertEqual(2, length(OneOf)),
+    ?assertEqual(#{<<"type">> => <<"string">>}, lists:nth(1, OneOf)),
+    ?assertEqual(#{<<"type">> => <<"null">>}, lists:nth(2, OneOf)).
+
+gm_type_nullable_ref_test() ->
+    %% gm_type:nullable(user_type) -> oneOf: [{$ref: ...}, {type: null}]
+    TypeDef = {n, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, nullable}, [{user_type, 1, user_id, []}]]}},
+    AllTypes = [{user_id, {type, 1, binary, []}}],
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, AllTypes),
+    ?assertMatch(#{<<"oneOf">> := _}, Schema),
+    OneOf = maps:get(<<"oneOf">>, Schema),
+    ?assertEqual(2, length(OneOf)),
+    ?assertMatch(#{<<"$ref">> := <<"#/components/schemas/UserId">>}, lists:nth(1, OneOf)),
+    ?assertEqual(#{<<"type">> => <<"null">>}, lists:nth(2, OneOf)).
+
+%%%===================================================================
+%%% Test: Phase 3 - OpenAPI Metadata Features
+%%%===================================================================
+
+with_metadata_description_test() ->
+    TypeDef = {user_id,
+        {type, 1, tuple, [
+            {atom, 1, with_metadata},
+            {type, 1, map, [
+                {type, 1, map_field_assoc, [{atom, 1, description}, {bin, 1, [{bin_element, 1, {string, 1, "Unique user identifier"}, default, default}]}]}
+            ]},
+            {type, 1, binary, []}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"string">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(<<"Unique user identifier">>, maps:get(<<"description">>, Schema)).
+
+with_metadata_multiple_keys_test() ->
+    TypeDef = {user_id,
+        {type, 1, tuple, [
+            {atom, 1, with_metadata},
+            {type, 1, map, [
+                {type, 1, map_field_assoc, [{atom, 1, description}, {bin, 1, [{bin_element, 1, {string, 1, "User ID"}, default, default}]}]},
+                {type, 1, map_field_assoc, [{atom, 1, example}, {bin, 1, [{bin_element, 1, {string, 1, "usr_abc123"}, default, default}]}]},
+                {type, 1, map_field_assoc, [{atom, 1, deprecated}, {atom, 1, true}]}
+            ]},
+            {type, 1, binary, []}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"string">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(<<"User ID">>, maps:get(<<"description">>, Schema)),
+    ?assertEqual(<<"usr_abc123">>, maps:get(<<"example">>, Schema)),
+    ?assertEqual(true, maps:get(<<"deprecated">>, Schema)).
+
+with_metadata_title_test() ->
+    TypeDef = {x,
+        {type, 1, tuple, [
+            {atom, 1, with_metadata},
+            {type, 1, map, [
+                {type, 1, map_field_assoc, [{atom, 1, title}, {bin, 1, [{bin_element, 1, {string, 1, "My Title"}, default, default}]}]}
+            ]},
+            {type, 1, integer, []}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"integer">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(<<"My Title">>, maps:get(<<"title">>, Schema)).
+
+with_metadata_read_write_only_test() ->
+    TypeDef = {x,
+        {type, 1, tuple, [
+            {atom, 1, with_metadata},
+            {type, 1, map, [
+                {type, 1, map_field_assoc, [{atom, 1, read_only}, {atom, 1, true}]},
+                {type, 1, map_field_assoc, [{atom, 1, description}, {bin, 1, [{bin_element, 1, {string, 1, "Read-only field"}, default, default}]}]}
+            ]},
+            {type, 1, binary, []}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(true, maps:get(<<"readOnly">>, Schema)),
+    ?assertEqual(<<"Read-only field">>, maps:get(<<"description">>, Schema)).
+
+with_metadata_default_test() ->
+    TypeDef = {x,
+        {type, 1, tuple, [
+            {atom, 1, with_metadata},
+            {type, 1, map, [
+                {type, 1, map_field_assoc, [{atom, 1, default}, {integer, 1, 42}]}
+            ]},
+            {type, 1, integer, []}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"integer">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(42, maps:get(<<"default">>, Schema)).
+
+additional_properties_false_test() ->
+    TypeDef = {strict_config,
+        {type, 1, tuple, [
+            {atom, 1, map_with_constraints},
+            {type, 1, map, [
+                {type, 1, map_field_assoc, [{atom, 1, additional_properties}, {atom, 1, false}]}
+            ]},
+            {type, 1, map, [
+                {type, 1, map_field_exact, [{atom, 1, name}, {type, 1, binary, []}]}
+            ]}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(<<"object">>, maps:get(<<"type">>, Schema)),
+    ?assertEqual(false, maps:get(<<"additionalProperties">>, Schema)).
+
+%%%===================================================================
+%%% Test: Phase 4 - Advanced Features (Discriminated Unions)
+%%%===================================================================
+
+discriminated_union_test() ->
+    AllTypes = [
+        {credit_card, {type, 1, map, [
+            {type, 1, map_field_exact, [{atom, 1, type}, {atom, 1, credit_card}]},
+            {type, 1, map_field_exact, [{atom, 1, card_number}, {type, 1, binary, []}]}
+        ]}},
+        {paypal, {type, 1, map, [
+            {type, 1, map_field_exact, [{atom, 1, type}, {atom, 1, paypal}]},
+            {type, 1, map_field_exact, [{atom, 1, email}, {type, 1, binary, []}]}
+        ]}}
+    ],
+    TypeDef = {payment,
+        {type, 1, tuple, [
+            {atom, 1, discriminated_union},
+            {atom, 1, type},
+            {cons, 1, {user_type, 1, credit_card, []},
+                {cons, 1, {user_type, 1, paypal, []},
+                    {nil, 1}}}
+        ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, AllTypes),
+    ?assertMatch(#{<<"oneOf">> := _, <<"discriminator">> := _}, Schema),
+    OneOf = maps:get(<<"oneOf">>, Schema),
+    ?assertEqual(2, length(OneOf)),
+    ?assertMatch(#{<<"$ref">> := <<"#/components/schemas/CreditCard">>}, lists:nth(1, OneOf)),
+    ?assertMatch(#{<<"$ref">> := <<"#/components/schemas/Paypal">>}, lists:nth(2, OneOf)),
+    Discriminator = maps:get(<<"discriminator">>, Schema),
+    ?assertEqual(#{<<"propertyName">> => <<"type">>}, Discriminator).
 

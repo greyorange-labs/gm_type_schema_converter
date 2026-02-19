@@ -103,13 +103,29 @@ convert_type_to_schema({TypeName, TypeDef}, AllTypes, Visited) ->
     [atom()]
 ) -> json_schema().
 
-%% Union type -> oneOf
+%% Union type -> oneOf (with atom-enum optimization)
 convert_type_definition({type, _Line, union, Types}, AllTypes, Visited) ->
-    Schemas = lists:map(
-        fun(Type) -> convert_type_definition(Type, AllTypes, Visited) end,
-        Types
-    ),
-    #{<<"oneOf">> => Schemas};
+    case partition_atoms_and_types(Types) of
+        {Atoms, []} when length(Atoms) > 0 ->
+            %% All atoms -> single enum
+            EnumValues = [atom_to_binary(A, utf8) || A <- Atoms],
+            #{<<"type">> => <<"string">>, <<"enum">> => EnumValues};
+        {Atoms, NonAtoms} when length(Atoms) > 1 ->
+            %% Mixed union with multiple atoms -> collapse atoms into one enum entry
+            AtomEnum = #{<<"type">> => <<"string">>, <<"enum">> => [atom_to_binary(A, utf8) || A <- Atoms]},
+            OtherSchemas = lists:map(
+                fun(Type) -> convert_type_definition(Type, AllTypes, Visited) end,
+                NonAtoms
+            ),
+            #{<<"oneOf">> => [AtomEnum | OtherSchemas]};
+        _ ->
+            %% No optimization applicable
+            Schemas = lists:map(
+                fun(Type) -> convert_type_definition(Type, AllTypes, Visited) end,
+                Types
+            ),
+            #{<<"oneOf">> => Schemas}
+    end;
 
 %% List type -> array
 convert_type_definition({type, _Line, list, [ItemType]}, AllTypes, Visited) ->
@@ -153,9 +169,102 @@ convert_type_definition({type, _Line, float, []}, _AllTypes, _Visited) ->
 convert_type_definition({type, _Line, boolean, []}, _AllTypes, _Visited) ->
     #{<<"type">> => <<"boolean">>};
 
+%% Extended integer types
+convert_type_definition({type, _Line, non_neg_integer, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"integer">>, <<"minimum">> => 0};
+convert_type_definition({type, _Line, pos_integer, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"integer">>, <<"minimum">> => 1};
+convert_type_definition({type, _Line, neg_integer, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"integer">>, <<"maximum">> => -1};
+
+%% number() -> {type: number}
+convert_type_definition({type, _Line, number, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"number">>};
+
+%% nonempty_list(T) -> {type: array, items: T, minItems: 1}
+convert_type_definition({type, _Line, nonempty_list, [ItemType]}, AllTypes, Visited) ->
+    ItemsSchema = convert_type_definition(ItemType, AllTypes, Visited),
+    #{
+        <<"type">> => <<"array">>,
+        <<"items">> => ItemsSchema,
+        <<"minItems">> => 1
+    };
+
+%% string() -> {type: string} (Erlang string is a list of chars, map to JSON string)
+convert_type_definition({type, _Line, string, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+
+%% byte() -> {type: integer, minimum: 0, maximum: 255}
+convert_type_definition({type, _Line, byte, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"integer">>, <<"minimum">> => 0, <<"maximum">> => 255};
+
+%% char() -> {type: integer, minimum: 0, maximum: 1114111}
+convert_type_definition({type, _Line, char, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"integer">>, <<"minimum">> => 0, <<"maximum">> => 1114111};
+
+%% arity() -> {type: integer, minimum: 0, maximum: 255}
+convert_type_definition({type, _Line, arity, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"integer">>, <<"minimum">> => 0, <<"maximum">> => 255};
+
+%% atom() -> {type: string}
+convert_type_definition({type, _Line, atom, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+
+%% term() / any() -> {} (empty schema = accepts any value)
+convert_type_definition({type, _Line, term, []}, _AllTypes, _Visited) ->
+    #{};
+convert_type_definition({type, _Line, any, []}, _AllTypes, _Visited) ->
+    #{};
+
+%% timeout() -> oneOf: [non_neg_integer, 'infinity']
+convert_type_definition({type, _Line, timeout, []}, _AllTypes, _Visited) ->
+    #{<<"oneOf">> => [
+        #{<<"type">> => <<"integer">>, <<"minimum">> => 0},
+        #{<<"type">> => <<"string">>, <<"enum">> => [<<"infinity">>]}
+    ]};
+
+%% Generic tuple() -> {type: array}
+convert_type_definition({type, _Line, tuple, any}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"array">>};
+
 %% Atom literal -> string enum
 convert_type_definition({atom, _Line, Atom}, _AllTypes, _Visited) ->
     #{<<"type">> => <<"string">>, <<"enum">> => [atom_to_binary(Atom, utf8)]};
+
+%% gm_type remote types -> string with format
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, date}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>, <<"format">> => <<"date">>};
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, datetime}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>, <<"format">> => <<"date-time">>};
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, email}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>, <<"format">> => <<"email">>};
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, uri}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>, <<"format">> => <<"uri">>};
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, uuid}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>, <<"format">> => <<"uuid">>};
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, ipv4}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>, <<"format">> => <<"ipv4">>};
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, ipv6}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>, <<"format">> => <<"ipv6">>};
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, password}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>, <<"format">> => <<"password">>};
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, base64}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>, <<"format">> => <<"byte">>};
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, hostname}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>, <<"format">> => <<"hostname">>};
+
+%% gm_type remote types -> number with format
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, int32}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"integer">>, <<"format">> => <<"int32">>};
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, int64}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"integer">>, <<"format">> => <<"int64">>};
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, double}, []]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"number">>, <<"format">> => <<"double">>};
+
+%% gm_type:nullable(T) -> oneOf: [T, {type: null}]
+convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, nullable}, [InnerType]]}, AllTypes, Visited) ->
+    InnerSchema = convert_type_definition(InnerType, AllTypes, Visited),
+    #{<<"oneOf">> => [InnerSchema, #{<<"type">> => <<"null">>}]};
 
 %% Remote type reference (e.g., module:type())
 convert_type_definition({remote_type, _Line, [{atom, _, _Module}, {atom, _, TypeName}, []]}, AllTypes, Visited) ->
@@ -181,6 +290,21 @@ convert_type_definition({user_type, _Line, TypeName, []}, AllTypes, _Visited) ->
             SchemaName = capitalize_type_name(TypeName),
             #{<<"$ref">> => <<"#/components/schemas/", SchemaName/binary>>}
     end;
+
+%% Metadata wrapper: {with_metadata, MetadataMap, InnerType}
+%% Adds description, title, example, deprecated, etc. to the schema
+convert_type_definition(
+    {type, _Line, tuple, [
+        {atom, _, with_metadata},
+        MetadataMapAST,
+        InnerType
+    ]},
+    AllTypes,
+    Visited
+) ->
+    InnerSchema = convert_type_definition(InnerType, AllTypes, Visited),
+    Metadata = extract_constraint_map(MetadataMapAST, AllTypes, Visited),
+    add_metadata(InnerSchema, Metadata);
 
 %% anyOf required constraint: {any_of_required, [Key1, Key2, ...], BaseMapType}
 %% Generates JSON Schema with anyOf array requiring at least one of the specified keys
@@ -292,9 +416,83 @@ convert_type_definition(
     NegatedSchema = convert_type_definition(NegatedSchemaAST, AllTypes, Visited),
     BaseSchema#{<<"not">> => NegatedSchema};
 
+%% Discriminated union: {discriminated_union, PropertyName, [Type1, Type2, ...]}
+%% Generates oneOf with $refs and a discriminator object
+convert_type_definition(
+    {type, _Line, tuple, [
+        {atom, _, discriminated_union},
+        {atom, _, PropertyName},
+        VariantsList
+    ]},
+    _AllTypes,
+    _Visited
+) ->
+    Variants = extract_variant_types(VariantsList),
+    OneOfSchemas = lists:map(
+        fun(TypeName) ->
+            SchemaName = capitalize_type_name(TypeName),
+            #{<<"$ref">> => <<"#/components/schemas/", SchemaName/binary>>}
+        end,
+        Variants
+    ),
+    #{
+        <<"oneOf">> => OneOfSchemas,
+        <<"discriminator">> => #{<<"propertyName">> => atom_to_binary(PropertyName, utf8)}
+    };
+
+%% Specific tuple types (non-wrapper) -> array with fixed length
+%% Must come AFTER all wrapper tuple clauses above
+convert_type_definition({type, _Line, tuple, Elements}, AllTypes, Visited) when is_list(Elements) ->
+    N = length(Elements),
+    ElementSchemas = lists:map(
+        fun(E) -> convert_type_definition(E, AllTypes, Visited) end,
+        Elements
+    ),
+    UniqueSchemas = lists:usort(ElementSchemas),
+    ItemsSchema = case UniqueSchemas of
+        [Single] -> Single;
+        Multiple -> #{<<"oneOf">> => Multiple}
+    end,
+    #{
+        <<"type">> => <<"array">>,
+        <<"items">> => ItemsSchema,
+        <<"minItems">> => N,
+        <<"maxItems">> => N
+    };
+
 %% Fallback for unknown types
-convert_type_definition(_Other, _AllTypes, _Visited) ->
+convert_type_definition(Other, _AllTypes, _Visited) ->
+    logger:warning("gm_type_schema_converter: unknown type AST, falling back to object: ~p", [Other]),
     #{<<"type">> => <<"object">>}.
+
+%% @doc Extract variant type names from a list AST (for discriminated_union)
+-spec extract_variant_types(erl_parse:abstract_form()) -> [atom()].
+extract_variant_types({cons, _Line, {user_type, _, TypeName, []}, Rest}) ->
+    [TypeName | extract_variant_types(Rest)];
+extract_variant_types({nil, _Line}) ->
+    [];
+extract_variant_types({type, _Line, list, [{type, _, union, Types}]}) ->
+    lists:map(
+        fun({user_type, _, TypeName, []}) -> TypeName;
+           (Other) -> error({invalid_variant_type, Other})
+        end,
+        Types
+    );
+extract_variant_types(Other) ->
+    error({invalid_variant_list, Other}).
+
+%% @doc Partition union types into atom literals and other types
+-spec partition_atoms_and_types([erl_parse:abstract_type()]) -> {[atom()], [erl_parse:abstract_type()]}.
+partition_atoms_and_types(Types) ->
+    lists:foldl(
+        fun({atom, _, Atom}, {Atoms, Others}) ->
+            {Atoms ++ [Atom], Others};
+           (Other, {Atoms, Others}) ->
+            {Atoms, Others ++ [Other]}
+        end,
+        {[], []},
+        Types
+    ).
 
 %% @doc Check if a list contains map field definitions
 -spec is_map_with_fields(list()) -> boolean().
@@ -593,12 +791,47 @@ add_object_constraints(Schema, Constraints) ->
                 dependencies ->
                     Deps = convert_dependencies(Value),
                     Acc#{<<"dependencies">> => Deps};
+                additional_properties when is_boolean(Value) ->
+                    Acc#{<<"additionalProperties">> => Value};
                 _ -> Acc
             end
         end,
         Schema,
         maps:to_list(Constraints)
     ).
+
+%% @doc Add metadata annotations to schema (description, title, example, etc.)
+-spec add_metadata(json_schema(), map()) -> json_schema().
+add_metadata(Schema, Metadata) ->
+    lists:foldl(
+        fun({Key, Value}, Acc) ->
+            case Key of
+                description ->
+                    Acc#{<<"description">> => ensure_binary(Value)};
+                title ->
+                    Acc#{<<"title">> => ensure_binary(Value)};
+                default ->
+                    Acc#{<<"default">> => Value};
+                example ->
+                    Acc#{<<"example">> => Value};
+                deprecated when is_boolean(Value) ->
+                    Acc#{<<"deprecated">> => Value};
+                read_only when is_boolean(Value) ->
+                    Acc#{<<"readOnly">> => Value};
+                write_only when is_boolean(Value) ->
+                    Acc#{<<"writeOnly">> => Value};
+                _ -> Acc
+            end
+        end,
+        Schema,
+        maps:to_list(Metadata)
+    ).
+
+%% @doc Ensure a value is a binary string
+-spec ensure_binary(term()) -> binary().
+ensure_binary(Value) when is_binary(Value) -> Value;
+ensure_binary(Value) when is_list(Value) -> list_to_binary(Value);
+ensure_binary(Value) when is_atom(Value) -> atom_to_binary(Value, utf8).
 
 %% @doc Convert pattern properties map to JSON Schema format
 -spec convert_pattern_properties(term()) -> map().
