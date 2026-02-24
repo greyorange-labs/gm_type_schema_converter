@@ -1,10 +1,13 @@
+%%%-------------------------------------------------------------------
+%%% @author Platform Team <butler_server_platform@greyorange.sg>
+%%% @copyright (C) 2025, Grey Orange
+%%% @doc
+%%% EUnit test suite for gm_type_schema_converter
+%%% @end
+%%%-------------------------------------------------------------------
 -module(gm_type_schema_converter_tests).
 
 -include_lib("eunit/include/eunit.hrl").
-
-%%%===================================================================
-%%% Test Module for gm_type_schema_converter
-%%%===================================================================
 
 %%%===================================================================
 %%% Test: capitalize_type_name/1
@@ -150,15 +153,12 @@ type_to_schema_union_single_atom_mixed_test() ->
 %%%===================================================================
 
 type_to_schema_user_type_reference_test() ->
-    %% Define a base type
     BaseType = {user_id, {type, 1, binary, []}},
-    %% Reference it
     TypeDef = {ref_type, {user_type, 1, user_id, []}},
     Schema = gm_type_schema_converter:type_to_schema(TypeDef, [BaseType]),
     ?assertMatch(#{<<"$ref">> := <<"#/components/schemas/UserId">>}, Schema).
 
 type_to_schema_circular_reference_test() ->
-    %% Define a type that references itself
     NodeType =
         {node,
             {type, 1, map, [
@@ -218,7 +218,6 @@ types_to_schemas_with_references_test() ->
 %%%===================================================================
 
 types_to_schemas_diagnose_infra_request_test() ->
-    %% Test the actual type from gm_common_http_handler
     Types = [
         {infra_test_name,
             {type, 1, union, [
@@ -245,7 +244,6 @@ types_to_schemas_diagnose_infra_request_test() ->
     ?assertMatch(#{<<"InfraTestName">> := _}, Schemas),
     ?assertMatch(#{<<"DiagnoseInfraRequest">> := _}, Schemas),
 
-    %% Check DiagnoseInfraRequest schema
     RequestSchema = maps:get(<<"DiagnoseInfraRequest">>, Schemas),
     ?assertEqual(<<"object">>, maps:get(<<"type">>, RequestSchema)),
     Properties = maps:get(<<"properties">>, RequestSchema),
@@ -254,7 +252,6 @@ types_to_schemas_diagnose_infra_request_test() ->
     ItemsSchema = maps:get(<<"items">>, TestsSchema),
     ?assertMatch(#{<<"$ref">> := <<"#/components/schemas/InfraTestName">>}, ItemsSchema),
 
-    %% Check required field
     Required = maps:get(<<"required">>, RequestSchema),
     ?assert(lists:member(<<"tests">>, Required)).
 
@@ -285,7 +282,6 @@ types_to_schemas_nested_map_test() ->
 %%%===================================================================
 
 type_to_schema_unknown_type_test() ->
-    %% Unknown type should return object as fallback
     TypeDef = {unknown, {type, 1, unknown_type, []}},
     Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
     ?assertEqual(#{<<"type">> => <<"object">>}, Schema).
@@ -302,7 +298,6 @@ types_to_schemas_empty_list_test() ->
     ?assertEqual(#{}, Schemas).
 
 capitalize_type_name_empty_atom_test() ->
-    %% Edge case: empty atom (shouldn't happen in practice)
     Result = gm_type_schema_converter:capitalize_type_name(''),
     ?assert(is_binary(Result)).
 
@@ -465,18 +460,15 @@ all_of_required_test() ->
     ?assertMatch(#{<<"allOf">> := _}, Schema),
     AllOf = maps:get(<<"allOf">>, Schema),
     ?assertEqual(2, length(AllOf)),
-    %% Check that each allOf entry requires one of the keys
     [First | _] = AllOf,
     ?assertMatch(#{<<"required">> := _}, First).
 
 not_constraint_test() ->
-    %% Test not constraint - string that is not empty
     TypeDef =
         {non_empty_string,
             {type, 0, tuple, [
                 {atom, 0, not_constraint},
                 {type, 0, binary, []},
-                %% Negated schema: empty string enum
                 {type, 0, map, [
                     {type, 0, map_field_assoc, [
                         {atom, 0, type}, {bin, 0, [{bin_element, 0, {string, 0, "string"}, default, default}]}
@@ -493,7 +485,6 @@ not_constraint_test() ->
     ?assertEqual(<<"string">>, maps:get(<<"type">>, Schema)),
     ?assertMatch(#{<<"not">> := _}, Schema),
     NotSchema = maps:get(<<"not">>, Schema),
-    %% The negated schema should be an object with type and enum
     ?assertMatch(#{<<"type">> := _}, NotSchema).
 
 %%%===================================================================
@@ -600,7 +591,6 @@ generic_tuple_test() ->
     ?assertEqual(#{<<"type">> => <<"array">>}, Schema).
 
 specific_tuple_test() ->
-    %% {binary(), integer()} -> array with fixed length 2
     TypeDef =
         {pair,
             {type, 1, tuple, [
@@ -611,12 +601,10 @@ specific_tuple_test() ->
     ?assertEqual(<<"array">>, maps:get(<<"type">>, Schema)),
     ?assertEqual(2, maps:get(<<"minItems">>, Schema)),
     ?assertEqual(2, maps:get(<<"maxItems">>, Schema)),
-    %% Items should be oneOf since types differ
     Items = maps:get(<<"items">>, Schema),
     ?assertMatch(#{<<"oneOf">> := _}, Items).
 
 specific_tuple_same_types_test() ->
-    %% {binary(), binary()} -> array with single items schema
     TypeDef =
         {pair,
             {type, 1, tuple, [
@@ -627,7 +615,6 @@ specific_tuple_same_types_test() ->
     ?assertEqual(<<"array">>, maps:get(<<"type">>, Schema)),
     ?assertEqual(2, maps:get(<<"minItems">>, Schema)),
     ?assertEqual(2, maps:get(<<"maxItems">>, Schema)),
-    %% Items should be single schema since types are the same
     ?assertEqual(#{<<"type">> => <<"string">>}, maps:get(<<"items">>, Schema)).
 
 %%%===================================================================
@@ -700,7 +687,6 @@ gm_type_double_test() ->
     ?assertEqual(#{<<"type">> => <<"number">>, <<"format">> => <<"double">>}, Schema).
 
 gm_type_nullable_test() ->
-    %% gm_type:nullable(binary()) -> oneOf: [{type: string}, {type: null}]
     TypeDef = {n, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, nullable}, [{type, 1, binary, []}]]}},
     Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
     ?assertMatch(#{<<"oneOf">> := _}, Schema),
@@ -710,7 +696,6 @@ gm_type_nullable_test() ->
     ?assertEqual(#{<<"type">> => <<"null">>}, lists:nth(2, OneOf)).
 
 gm_type_nullable_ref_test() ->
-    %% gm_type:nullable(user_type) -> oneOf: [{$ref: ...}, {type: null}]
     TypeDef = {n, {remote_type, 1, [{atom, 1, gm_type}, {atom, 1, nullable}, [{user_type, 1, user_id, []}]]}},
     AllTypes = [{user_id, {type, 1, binary, []}}],
     Schema = gm_type_schema_converter:type_to_schema(TypeDef, AllTypes),

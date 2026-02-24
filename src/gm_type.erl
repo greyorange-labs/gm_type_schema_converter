@@ -1,8 +1,8 @@
--module(gm_type).
-
-%%%===================================================================
+%%%-------------------------------------------------------------------
+%%% @author Platform Team <butler_server_platform@greyorange.sg>
+%%% @copyright (C) 2025, Grey Orange
+%%% @doc
 %%% Semantic Type Aliases for JSON Schema / OpenAPI Format Generation
-%%%===================================================================
 %%%
 %%% These types alias standard Erlang types but are recognized by
 %%% gm_type_schema_converter to generate JSON Schema `format` keywords.
@@ -11,8 +11,9 @@
 %%%   -type created_at() :: gm_type:datetime().
 %%%   -type user_email() :: gm_type:email().
 %%%   -type user_id() :: gm_type:uuid().
-%%%
-%%%===================================================================
+%%% @end
+%%%-------------------------------------------------------------------
+-module(gm_type).
 
 -export_type([
     %% String formats
