@@ -1,18 +1,22 @@
+%%%-------------------------------------------------------------------
+%%% @author amarBitMan <https://github.com/amarBitMan>
+%%% @copyright (C) 2025, Grey Orange
+%%%-------------------------------------------------------------------
 -module(gm_type).
 
-%%%===================================================================
-%%% Semantic Type Aliases for JSON Schema / OpenAPI Format Generation
-%%%===================================================================
-%%%
-%%% These types alias standard Erlang types but are recognized by
-%%% gm_type_schema_converter to generate JSON Schema `format` keywords.
-%%%
-%%% Usage in type specs:
-%%%   -type created_at() :: gm_type:datetime().
-%%%   -type user_email() :: gm_type:email().
-%%%   -type user_id() :: gm_type:uuid().
-%%%
-%%%===================================================================
+-moduledoc """
+----------------------------------------------------------------------
+Semantic Type Aliases for JSON Schema / OpenAPI Format Generation
+
+These types alias standard Erlang types but are recognized by
+gm_type_schema_converter to generate JSON Schema `format` keywords.
+
+Usage in type specs:
+  -type created_at() :: gm_type:datetime().
+  -type user_email() :: gm_type:email().
+  -type user_id() :: gm_type:uuid().
+----------------------------------------------------------------------
+""".
 
 -export_type([
     %% String formats
