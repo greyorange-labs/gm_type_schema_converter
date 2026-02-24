@@ -218,6 +218,9 @@ convert_type_definition({type, _Line, tuple, any}, _AllTypes, _Visited) ->
 %% Atom literal -> string enum
 convert_type_definition({atom, _Line, Atom}, _AllTypes, _Visited) ->
     #{<<"type">> => <<"string">>, <<"enum">> => [atom_to_binary(Atom, utf8)]};
+%% Integer literal -> integer const (e.g. code => 400 in a map type)
+convert_type_definition({integer, _Line, Value}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"integer">>, <<"enum">> => [Value]};
 %% gm_type remote types -> string with format
 convert_type_definition({remote_type, _Line, [{atom, _, gm_type}, {atom, _, date}, []]}, _AllTypes, _Visited) ->
     #{<<"type">> => <<"string">>, <<"format">> => <<"date">>};
@@ -423,6 +426,21 @@ convert_type_definition({type, _Line, tuple, Elements}, AllTypes, Visited) when 
 %% Record field definitions aren't available in the type AST, so convert to object
 convert_type_definition({type, _Line, record, [{atom, _, _RecordName} | _]}, _AllTypes, _Visited) ->
     #{<<"type">> => <<"object">>};
+%% nil type (empty list []) -> array with maxItems 0
+convert_type_definition({type, _Line, nil, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"array">>, <<"maxItems">> => 0};
+%% Bare list() without type parameter -> array
+convert_type_definition({type, _Line, list, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"array">>};
+%% pid() -> string (represented as string in JSON)
+convert_type_definition({type, _Line, pid, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+%% reference() -> string (represented as string in JSON)
+convert_type_definition({type, _Line, reference, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+%% Annotated type (Name :: Type) -> convert the underlying type, ignore the variable name
+convert_type_definition({ann_type, _Line, [_Var, Type]}, AllTypes, Visited) ->
+    convert_type_definition(Type, AllTypes, Visited);
 %% Fallback for unknown types
 convert_type_definition(Other, _AllTypes, _Visited) ->
     logger:warning("gm_type_schema_converter: unknown type AST, falling back to object: ~p", [Other]),

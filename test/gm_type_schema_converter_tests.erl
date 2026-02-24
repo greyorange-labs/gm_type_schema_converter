@@ -290,6 +290,47 @@ type_to_schema_record_type_test() ->
     Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
     ?assertEqual(#{<<"type">> => <<"object">>}, Schema).
 
+type_to_schema_integer_literal_test() ->
+    TypeDef = {status_code, {integer, 100, 400}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"enum">> => [400]}, Schema).
+
+type_to_schema_nil_type_test() ->
+    TypeDef = {empty, {type, 1, nil, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"array">>, <<"maxItems">> => 0}, Schema).
+
+type_to_schema_bare_list_type_test() ->
+    TypeDef = {items, {type, 1, list, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"array">>}, Schema).
+
+type_to_schema_pid_type_test() ->
+    TypeDef = {process, {type, 1, pid, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+type_to_schema_annotated_type_test() ->
+    %% ann_type: Steps :: integer()
+    TypeDef = {steps, {ann_type, 1, [{var, 1, 'Steps'}, {type, 1, integer, []}]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>}, Schema).
+
+type_to_schema_annotated_type_union_test() ->
+    %% ann_type: EntityType :: butler | rack | undefined
+    TypeDef =
+        {entity_type,
+            {ann_type, 1, [
+                {var, 1, 'EntityType'},
+                {type, 1, union, [
+                    {atom, 1, butler},
+                    {atom, 1, rack},
+                    {atom, 1, undefined}
+                ]}
+            ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"enum">> => [<<"butler">>, <<"rack">>, <<"undefined">>]}, Schema).
+
 types_to_schemas_empty_list_test() ->
     Schemas = gm_type_schema_converter:types_to_schemas([]),
     ?assertEqual(#{}, Schemas).
