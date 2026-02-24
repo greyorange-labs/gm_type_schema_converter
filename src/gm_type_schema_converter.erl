@@ -1,18 +1,21 @@
 %%%-------------------------------------------------------------------
-%%% @author Platform Team <butler_server_platform@greyorange.sg>
+%%% @author Amar Chand <amar.c@greyorange.com>
 %%% @copyright (C) 2025, Grey Orange
-%%% @doc
-%%% Type to JSON Schema Converter
-%%%
-%%% Converts Erlang type definitions (Abstract Syntax Trees) to
-%%% JSON Schema format (compatible with OpenAPI 3.0.x).
-%%%
-%%% This library is shared between:
-%%% - rebar3_openapi plugin (for documentation generation)
-%%% - Runtime schema validation (for request/response validation)
-%%% @end
 %%%-------------------------------------------------------------------
 -module(gm_type_schema_converter).
+
+-moduledoc """
+----------------------------------------------------------------------
+Type to JSON Schema Converter
+
+Converts Erlang type definitions (Abstract Syntax Trees) to
+JSON Schema format (compatible with OpenAPI 3.0.x).
+
+This library is shared between:
+- rebar3_openapi plugin (for documentation generation)
+- Runtime schema validation (for request/response validation)
+----------------------------------------------------------------------
+""".
 
 -export([
     type_to_schema/2,
@@ -36,33 +39,31 @@
 %%% Public API
 %%%===================================================================
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Convert a single type definition to JSON Schema.
-%% Takes a {TypeName, TypeAST} tuple and a list of all type definitions
-%% for reference resolution. Returns a JSON Schema map.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc """
+----------------------------------------------------------------------
+Convert a single type definition to JSON Schema.
+Takes a {TypeName, TypeAST} tuple and a list of all type definitions
+for reference resolution. Returns a JSON Schema map.
+----------------------------------------------------------------------
+""".
 -spec type_to_schema(
     TypeDef :: type_def(),
     AllTypes :: [type_def()]
 ) -> json_schema().
 type_to_schema({_TypeName, TypeDefAST}, AllTypes) ->
-    %% Start with empty visited list - the type itself isn't circular on first visit
     convert_type_definition(TypeDefAST, AllTypes, []).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Convert all type definitions to a JSON Schemas map.
-%% Returns a map of capitalized type names to JSON Schema maps.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc """
+----------------------------------------------------------------------
+Convert all type definitions to a JSON Schemas map.
+Returns a map of capitalized type names to JSON Schema maps.
+----------------------------------------------------------------------
+""".
 -spec types_to_schemas([type_def()]) -> #{binary() => json_schema()}.
 types_to_schemas(Types) ->
     lists:foldl(
         fun({TypeName, _TypeDef} = TypeTuple, Acc) ->
             Schema = type_to_schema(TypeTuple, Types),
-            %% Convert atom type name to capitalized binary for schema naming
             SchemaName = capitalize_type_name(TypeName),
             Acc#{SchemaName => Schema}
         end,
@@ -70,12 +71,12 @@ types_to_schemas(Types) ->
         Types
     ).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Capitalize type name for schema naming convention.
-%% Examples: user_profile -> <<"UserProfile">>, user -> <<"User">>
-%% @end
-%% ------------------------------------------------------------------------------
+-doc """
+----------------------------------------------------------------------
+Capitalize type name for schema naming convention.
+Examples: user_profile -> <<"UserProfile">>, user -> <<"User">>
+----------------------------------------------------------------------
+""".
 -spec capitalize_type_name(atom()) -> binary().
 capitalize_type_name(TypeName) ->
     TypeStr = atom_to_list(TypeName),
@@ -87,13 +88,7 @@ capitalize_type_name(TypeName) ->
 %%% Internal Functions
 %%%===================================================================
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Convert a type definition to JSON Schema, handling circular references.
-%% Returns a $ref for circular references, otherwise delegates to
-%% convert_type_definition/3.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec convert_type_to_schema(
     {atom(), erl_parse:abstract_type()} | undefined,
     [type_def()],
@@ -110,14 +105,7 @@ convert_type_to_schema({TypeName, TypeDef}, AllTypes, Visited) ->
             convert_type_definition(TypeDef, AllTypes, [TypeName | Visited])
     end.
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Convert an Erlang type AST node to JSON Schema.
-%% Pattern matches on the AST structure and produces the corresponding
-%% JSON Schema representation. Handles unions, lists, maps, primitives,
-%% remote types, user types, constraint wrappers, and discriminated unions.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec convert_type_definition(
     erl_parse:abstract_type(),
     [type_def()],
@@ -128,11 +116,9 @@ convert_type_to_schema({TypeName, TypeDef}, AllTypes, Visited) ->
 convert_type_definition({type, _Line, union, Types}, AllTypes, Visited) ->
     case partition_atoms_and_types(Types) of
         {Atoms, []} when length(Atoms) > 0 ->
-            %% All atoms -> single enum
             EnumValues = [atom_to_binary(A, utf8) || A <- Atoms],
             #{<<"type">> => <<"string">>, <<"enum">> => EnumValues};
         {Atoms, NonAtoms} when length(Atoms) > 1 ->
-            %% Mixed union with multiple atoms -> collapse atoms into one enum entry
             AtomEnum = #{<<"type">> => <<"string">>, <<"enum">> => [atom_to_binary(A, utf8) || A <- Atoms]},
             OtherSchemas = lists:map(
                 fun(Type) -> convert_type_definition(Type, AllTypes, Visited) end,
@@ -140,7 +126,6 @@ convert_type_definition({type, _Line, union, Types}, AllTypes, Visited) ->
             ),
             #{<<"oneOf">> => [AtomEnum | OtherSchemas]};
         _ ->
-            %% No optimization applicable
             Schemas = lists:map(
                 fun(Type) -> convert_type_definition(Type, AllTypes, Visited) end,
                 Types
@@ -155,7 +140,6 @@ convert_type_definition({type, _Line, list, [ItemType]}, AllTypes, Visited) ->
         <<"items">> => ItemsSchema
     };
 %% Map with field definitions -> object with properties
-%% This must come BEFORE the generic map pattern to match map fields first
 convert_type_definition({type, _Line, map, Fields}, AllTypes, Visited) when is_list(Fields) ->
     case is_map_with_fields(Fields) of
         true ->
@@ -200,7 +184,7 @@ convert_type_definition({type, _Line, nonempty_list, [ItemType]}, AllTypes, Visi
         <<"items">> => ItemsSchema,
         <<"minItems">> => 1
     };
-%% string() -> {type: string} (Erlang string is a list of chars, map to JSON string)
+%% string() -> {type: string}
 convert_type_definition({type, _Line, string, []}, _AllTypes, _Visited) ->
     #{<<"type">> => <<"string">>};
 %% byte() -> {type: integer, minimum: 0, maximum: 255}
@@ -276,7 +260,6 @@ convert_type_definition({remote_type, _Line, [{atom, _, _Module}, {atom, _, Type
     end;
 %% User-defined type reference
 convert_type_definition({user_type, _Line, TypeName, []}, AllTypes, _Visited) ->
-    %% Always return a $ref for user-defined types to promote reusability
     case find_type_definition(TypeName, AllTypes) of
         {TypeName, _TypeDef} ->
             SchemaName = capitalize_type_name(TypeName),
@@ -286,7 +269,6 @@ convert_type_definition({user_type, _Line, TypeName, []}, AllTypes, _Visited) ->
             #{<<"$ref">> => <<"#/components/schemas/", SchemaName/binary>>}
     end;
 %% Metadata wrapper: {with_metadata, MetadataMap, InnerType}
-%% Adds description, title, example, deprecated, etc. to the schema
 convert_type_definition(
     {type, _Line, tuple, [
         {atom, _, with_metadata},
@@ -300,7 +282,6 @@ convert_type_definition(
     Metadata = extract_constraint_map(MetadataMapAST, AllTypes, Visited),
     add_metadata(InnerSchema, Metadata);
 %% anyOf required constraint: {any_of_required, [Key1, Key2, ...], BaseMapType}
-%% Generates JSON Schema with anyOf array requiring at least one of the specified keys
 convert_type_definition(
     {type, _Line, tuple, [
         {atom, _, any_of_required},
@@ -396,7 +377,6 @@ convert_type_definition(
     NegatedSchema = convert_type_definition(NegatedSchemaAST, AllTypes, Visited),
     BaseSchema#{<<"not">> => NegatedSchema};
 %% Discriminated union: {discriminated_union, PropertyName, [Type1, Type2, ...]}
-%% Generates oneOf with $refs and a discriminator object
 convert_type_definition(
     {type, _Line, tuple, [
         {atom, _, discriminated_union},
@@ -448,11 +428,11 @@ convert_type_definition(Other, _AllTypes, _Visited) ->
     logger:warning("gm_type_schema_converter: unknown type AST, falling back to object: ~p", [Other]),
     #{<<"type">> => <<"object">>}.
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Extract variant type names from a list AST (for discriminated_union).
-%% @end
-%% ------------------------------------------------------------------------------
+%%%===================================================================
+%%% Internal Helpers
+%%%===================================================================
+
+-doc false.
 -spec extract_variant_types(erl_parse:abstract_form()) -> [atom()].
 extract_variant_types({cons, _Line, {user_type, _, TypeName, []}, Rest}) ->
     [TypeName | extract_variant_types(Rest)];
@@ -469,11 +449,7 @@ extract_variant_types({type, _Line, list, [{type, _, union, Types}]}) ->
 extract_variant_types(Other) ->
     error({invalid_variant_list, Other}).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Partition union types into atom literals and other types.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec partition_atoms_and_types([erl_parse:abstract_type()]) -> {[atom()], [erl_parse:abstract_type()]}.
 partition_atoms_and_types(Types) ->
     lists:foldl(
@@ -487,11 +463,7 @@ partition_atoms_and_types(Types) ->
         Types
     ).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Check if a list contains map field definitions.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec is_map_with_fields(list()) -> boolean().
 is_map_with_fields([]) ->
     false;
@@ -502,11 +474,7 @@ is_map_with_fields([{type, _, map_field_assoc, _} | _]) ->
 is_map_with_fields(_) ->
     false.
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Convert map with field definitions to JSON Schema object with properties.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec convert_map_with_fields(
     list(),
     [type_def()],
@@ -541,12 +509,7 @@ convert_map_with_fields(Fields, AllTypes, Visited) ->
             Result#{<<"required">> => lists:reverse(Required)}
     end.
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Convert generic map with key/value types to JSON Schema object
-%% with additionalProperties.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec convert_generic_map(
     list(),
     [type_def()],
@@ -561,12 +524,7 @@ convert_generic_map([_KeyType, ValueType], AllTypes, Visited) ->
 convert_generic_map(_, _AllTypes, _Visited) ->
     #{<<"type">> => <<"object">>}.
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Convert a map field to {Key, Schema, IsRequired}.
-%% map_field_exact (:=) fields are required, map_field_assoc (=>) are optional.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec convert_map_field(
     erl_parse:abstract_type(),
     [type_def()],
@@ -581,11 +539,7 @@ convert_map_field({type, _Line, map_field_assoc, [{atom, _, Key}, ValueType]}, A
 convert_map_field(_Other, _AllTypes, _Visited) ->
     {error, invalid_field}.
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Find a type definition by name in the types list.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec find_type_definition(atom(), [type_def()]) ->
     type_def() | undefined.
 find_type_definition(TypeName, AllTypes) ->
@@ -594,24 +548,14 @@ find_type_definition(TypeName, AllTypes) ->
         Found -> Found
     end.
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Capitalize first letter of a word.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec capitalize_word(string()) -> string().
 capitalize_word([]) ->
     [];
 capitalize_word([First | Rest]) ->
     [string:to_upper(First) | Rest].
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Extract atom keys from list or tuple AST.
-%% Handles Erlang abstract format for lists: {cons, Line, Head, Tail} or {nil, Line}.
-%% Also handles tuple format: {tuple, Line, [atom1, atom2, ...]}.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec extract_keys_from_list(erl_parse:abstract_form()) -> [atom()].
 extract_keys_from_list({cons, _Line, {atom, _, Key}, Rest}) ->
     [Key | extract_keys_from_list(Rest)];
@@ -626,7 +570,6 @@ extract_keys_from_list({tuple, _Line, Elements}) ->
         Elements
     );
 extract_keys_from_list({type, _Line, tuple, Elements}) ->
-    %% Handle type-wrapped tuple format: {type, Line, tuple, [...]}
     lists:map(
         fun
             ({atom, _, Key}) -> Key;
@@ -635,7 +578,6 @@ extract_keys_from_list({type, _Line, tuple, Elements}) ->
         Elements
     );
 extract_keys_from_list({type, _Line, list, [{type, _Line2, union, Types}]}) ->
-    %% Handle union type in list: [module_name | function_name | process_name]
     lists:map(
         fun
             ({user_type, _, TypeName, []}) -> TypeName;
@@ -647,12 +589,7 @@ extract_keys_from_list({type, _Line, list, [{type, _Line2, union, Types}]}) ->
 extract_keys_from_list(Other) ->
     error({invalid_key_list, Other}).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Generate anyOf array with per-key required schemas.
-%% Each subschema requires exactly one of the specified keys.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec generate_any_of_required_schemas([atom()]) -> [json_schema()].
 generate_any_of_required_schemas(Keys) ->
     lists:map(
@@ -663,12 +600,7 @@ generate_any_of_required_schemas(Keys) ->
         Keys
     ).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Generate allOf array with per-key required schemas.
-%% Each subschema requires one of the specified keys (all must be present).
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec generate_all_of_required_schemas([atom()]) -> [json_schema()].
 generate_all_of_required_schemas(Keys) ->
     lists:map(
@@ -679,12 +611,7 @@ generate_all_of_required_schemas(Keys) ->
         Keys
     ).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Extract constraint map from AST.
-%% Converts map field AST nodes into an Erlang map of constraint key-value pairs.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec extract_constraint_map(erl_parse:abstract_type(), [type_def()], [atom()]) -> map().
 extract_constraint_map({type, _Line, map, Fields}, _AllTypes, _Visited) ->
     lists:foldl(
@@ -706,12 +633,7 @@ extract_constraint_map({type, _Line, map, Fields}, _AllTypes, _Visited) ->
 extract_constraint_map(_Other, _AllTypes, _Visited) ->
     #{}.
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Extract constraint value from AST.
-%% Handles integer, float, atom, binary, and string literal AST nodes.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec extract_constraint_value_from_ast(erl_parse:abstract_type()) -> term().
 extract_constraint_value_from_ast({integer, _, Value}) ->
     Value;
@@ -724,14 +646,9 @@ extract_constraint_value_from_ast({bin, _, Elements}) ->
 extract_constraint_value_from_ast({string, _, Value}) ->
     list_to_binary(Value);
 extract_constraint_value_from_ast(Other) ->
-    %% For complex types (like schemas for contains, propertyNames), return the AST
     Other.
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Extract binary value from binary AST elements.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec extract_binary_value([term()]) -> binary().
 extract_binary_value(Elements) ->
     lists:foldl(
@@ -751,12 +668,7 @@ extract_binary_value(Elements) ->
         Elements
     ).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Add numeric constraints to schema (for floats).
-%% Supports minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec add_numeric_constraints(json_schema(), map()) -> json_schema().
 add_numeric_constraints(Schema, Constraints) ->
     lists:foldl(
@@ -774,12 +686,7 @@ add_numeric_constraints(Schema, Constraints) ->
         maps:to_list(Constraints)
     ).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Add string constraints to schema.
-%% Supports minLength, maxLength, pattern, format.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec add_string_constraints(json_schema(), map()) -> json_schema().
 add_string_constraints(Schema, Constraints) ->
     lists:foldl(
@@ -811,12 +718,7 @@ add_string_constraints(Schema, Constraints) ->
         maps:to_list(Constraints)
     ).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Add array constraints to schema.
-%% Supports minItems, maxItems, uniqueItems, contains.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec add_array_constraints(json_schema(), map()) -> json_schema().
 add_array_constraints(Schema, Constraints) ->
     lists:foldl(
@@ -839,13 +741,7 @@ add_array_constraints(Schema, Constraints) ->
         maps:to_list(Constraints)
     ).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Add object constraints to schema.
-%% Supports minProperties, maxProperties, propertyNames, patternProperties,
-%% dependencies, additionalProperties.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec add_object_constraints(json_schema(), map()) -> json_schema().
 add_object_constraints(Schema, Constraints) ->
     lists:foldl(
@@ -874,11 +770,7 @@ add_object_constraints(Schema, Constraints) ->
         maps:to_list(Constraints)
     ).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Add metadata annotations to schema (description, title, example, etc.).
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec add_metadata(json_schema(), map()) -> json_schema().
 add_metadata(Schema, Metadata) ->
     lists:foldl(
@@ -906,21 +798,13 @@ add_metadata(Schema, Metadata) ->
         maps:to_list(Metadata)
     ).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Ensure a value is a binary string.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec ensure_binary(term()) -> binary().
 ensure_binary(Value) when is_binary(Value) -> Value;
 ensure_binary(Value) when is_list(Value) -> list_to_binary(Value);
 ensure_binary(Value) when is_atom(Value) -> atom_to_binary(Value, utf8).
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Convert pattern properties map to JSON Schema format.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec convert_pattern_properties(term()) -> map().
 convert_pattern_properties(PatternProps) when is_map(PatternProps) ->
     maps:fold(
@@ -939,11 +823,7 @@ convert_pattern_properties(PatternProps) when is_map(PatternProps) ->
 convert_pattern_properties(_Other) ->
     #{}.
 
-%% ------------------------------------------------------------------------------
-%% @doc
-%% Convert dependencies map to JSON Schema format.
-%% @end
-%% ------------------------------------------------------------------------------
+-doc false.
 -spec convert_dependencies(term()) -> map().
 convert_dependencies(Deps) when is_map(Deps) ->
     maps:fold(

@@ -1,11 +1,14 @@
 %%%-------------------------------------------------------------------
-%%% @author Platform Team <butler_server_platform@greyorange.sg>
+%%% @author Amar Chand <amar.c@greyorange.com>
 %%% @copyright (C) 2025, Grey Orange
-%%% @doc
-%%% EUnit test suite for gm_type_schema_converter
-%%% @end
 %%%-------------------------------------------------------------------
 -module(gm_type_schema_converter_tests).
+
+-moduledoc """
+----------------------------------------------------------------------
+EUnit test suite for gm_type_schema_converter
+----------------------------------------------------------------------
+""".
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -106,7 +109,6 @@ type_to_schema_list_test() ->
 %%%===================================================================
 
 type_to_schema_union_atoms_enum_test() ->
-    %% All-atom union should collapse to a single enum
     TypeDef =
         {status,
             {type, 1, union, [
@@ -118,7 +120,6 @@ type_to_schema_union_atoms_enum_test() ->
     ?assertEqual([<<"active">>, <<"inactive">>], maps:get(<<"enum">>, Schema)).
 
 type_to_schema_union_mixed_test() ->
-    %% Mixed union: atoms collapsed into one enum + other types
     TypeDef =
         {value,
             {type, 1, union, [
@@ -130,13 +131,11 @@ type_to_schema_union_mixed_test() ->
     ?assertMatch(#{<<"oneOf">> := _}, Schema),
     OneOf = maps:get(<<"oneOf">>, Schema),
     ?assertEqual(2, length(OneOf)),
-    %% First should be the collapsed atom enum
     [AtomEnum | _] = OneOf,
     ?assertEqual(<<"string">>, maps:get(<<"type">>, AtomEnum)),
     ?assertEqual([<<"null">>, <<"undefined">>], maps:get(<<"enum">>, AtomEnum)).
 
 type_to_schema_union_single_atom_mixed_test() ->
-    %% Single atom in mixed union - no collapse (stays oneOf)
     TypeDef =
         {opt,
             {type, 1, union, [
@@ -287,8 +286,6 @@ type_to_schema_unknown_type_test() ->
     ?assertEqual(#{<<"type">> => <<"object">>}, Schema).
 
 type_to_schema_record_type_test() ->
-    %% Record type reference should convert to object without warning
-    %% e.g. -type movetaskrec() :: #movetaskrec{}.
     TypeDef = {movetaskrec, {type, {913, 24}, record, [{atom, {913, 25}, movetaskrec}]}},
     Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
     ?assertEqual(#{<<"type">> => <<"object">>}, Schema).
