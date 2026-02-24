@@ -432,15 +432,82 @@ convert_type_definition({type, _Line, nil, []}, _AllTypes, _Visited) ->
 %% Bare list() without type parameter -> array
 convert_type_definition({type, _Line, list, []}, _AllTypes, _Visited) ->
     #{<<"type">> => <<"array">>};
-%% pid() -> string (represented as string in JSON)
-convert_type_definition({type, _Line, pid, []}, _AllTypes, _Visited) ->
-    #{<<"type">> => <<"string">>};
-%% reference() -> string (represented as string in JSON)
-convert_type_definition({type, _Line, reference, []}, _AllTypes, _Visited) ->
-    #{<<"type">> => <<"string">>};
 %% Annotated type (Name :: Type) -> convert the underlying type, ignore the variable name
 convert_type_definition({ann_type, _Line, [_Var, Type]}, AllTypes, Visited) ->
     convert_type_definition(Type, AllTypes, Visited);
+%% Character literal ($a) -> integer const (characters are integers in Erlang)
+convert_type_definition({char, _Line, Value}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"integer">>, <<"enum">> => [Value]};
+%% Unary operator on type (e.g., -1 in a type spec)
+convert_type_definition({op, _Line, '-', {integer, _, Value}}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"integer">>, <<"enum">> => [-Value]};
+convert_type_definition({op, _Line, '+', {integer, _, Value}}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"integer">>, <<"enum">> => [Value]};
+%% Sized binary types: <<_:N>> or <<_:_*N>> or <<_:N, _:_*M>>
+convert_type_definition({type, _Line, binary, [_Size, _Unit]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+%% bitstring() -> string
+convert_type_definition({type, _Line, bitstring, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+%% nonempty_string() -> string with minLength 1
+convert_type_definition({type, _Line, nonempty_string, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>, <<"minLength">> => 1};
+%% List variant types -> array
+convert_type_definition({type, _Line, maybe_improper_list, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"array">>};
+convert_type_definition({type, _Line, maybe_improper_list, [ItemType, _TailType]}, AllTypes, Visited) ->
+    ItemsSchema = convert_type_definition(ItemType, AllTypes, Visited),
+    #{<<"type">> => <<"array">>, <<"items">> => ItemsSchema};
+convert_type_definition({type, _Line, nonempty_improper_list, [ItemType, _TailType]}, AllTypes, Visited) ->
+    ItemsSchema = convert_type_definition(ItemType, AllTypes, Visited),
+    #{<<"type">> => <<"array">>, <<"items">> => ItemsSchema, <<"minItems">> => 1};
+convert_type_definition({type, _Line, nonempty_maybe_improper_list, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"array">>, <<"minItems">> => 1};
+convert_type_definition({type, _Line, nonempty_maybe_improper_list, [ItemType, _TailType]}, AllTypes, Visited) ->
+    ItemsSchema = convert_type_definition(ItemType, AllTypes, Visited),
+    #{<<"type">> => <<"array">>, <<"items">> => ItemsSchema, <<"minItems">> => 1};
+%% Process/system types -> string
+convert_type_definition({type, _Line, pid, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+convert_type_definition({type, _Line, port, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+convert_type_definition({type, _Line, reference, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+convert_type_definition({type, _Line, node, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+convert_type_definition({type, _Line, module, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+%% identifier() -> string (pid | port | reference)
+convert_type_definition({type, _Line, identifier, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+%% iodata() / iolist() -> string (binary data in JSON)
+convert_type_definition({type, _Line, iodata, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+convert_type_definition({type, _Line, iolist, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
+%% mfa() -> array (3-tuple: {module, function, arity})
+convert_type_definition({type, _Line, mfa, []}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"array">>, <<"minItems">> => 3, <<"maxItems">> => 3};
+%% none() / no_return() -> impossible type (nothing validates)
+convert_type_definition({type, _Line, none, []}, _AllTypes, _Visited) ->
+    #{<<"not">> => #{}};
+convert_type_definition({type, _Line, no_return, []}, _AllTypes, _Visited) ->
+    #{<<"not">> => #{}};
+%% fun() types -> empty schema (functions cannot be serialized to JSON)
+convert_type_definition({type, _Line, 'fun', _Args}, _AllTypes, _Visited) ->
+    #{};
+convert_type_definition({type, _Line, bounded_fun, _Args}, _AllTypes, _Visited) ->
+    #{};
+%% product type -> array
+convert_type_definition({type, _Line, product, Elements}, AllTypes, Visited) ->
+    Schemas = lists:map(fun(E) -> convert_type_definition(E, AllTypes, Visited) end, Elements),
+    #{<<"type">> => <<"array">>, <<"items">> => #{<<"oneOf">> => Schemas}};
+%% Type variable -> empty schema (accepts any, like a generic parameter)
+convert_type_definition({var, _Line, _VarName}, _AllTypes, _Visited) ->
+    #{};
+%% Binary type spec in type position (e.g., <<>> or <<"string">>)
+convert_type_definition({bin, _Line, _Elements}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"string">>};
 %% Fallback for unknown types
 convert_type_definition(Other, _AllTypes, _Visited) ->
     logger:warning("gm_type_schema_converter: unknown type AST, falling back to object: ~p", [Other]),
