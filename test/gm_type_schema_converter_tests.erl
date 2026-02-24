@@ -290,6 +290,213 @@ type_to_schema_record_type_test() ->
     Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
     ?assertEqual(#{<<"type">> => <<"object">>}, Schema).
 
+type_to_schema_integer_literal_test() ->
+    TypeDef = {status_code, {integer, 100, 400}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"enum">> => [400]}, Schema).
+
+type_to_schema_nil_type_test() ->
+    TypeDef = {empty, {type, 1, nil, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"array">>, <<"maxItems">> => 0}, Schema).
+
+type_to_schema_bare_list_type_test() ->
+    TypeDef = {items, {type, 1, list, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"array">>}, Schema).
+
+type_to_schema_pid_type_test() ->
+    TypeDef = {process, {type, 1, pid, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+type_to_schema_annotated_type_test() ->
+    %% ann_type: Steps :: integer()
+    TypeDef = {steps, {ann_type, 1, [{var, 1, 'Steps'}, {type, 1, integer, []}]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>}, Schema).
+
+type_to_schema_annotated_type_union_test() ->
+    %% ann_type: EntityType :: butler | rack | undefined
+    TypeDef =
+        {entity_type,
+            {ann_type, 1, [
+                {var, 1, 'EntityType'},
+                {type, 1, union, [
+                    {atom, 1, butler},
+                    {atom, 1, rack},
+                    {atom, 1, undefined}
+                ]}
+            ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"enum">> => [<<"butler">>, <<"rack">>, <<"undefined">>]}, Schema).
+
+%% Character literal ($a)
+type_to_schema_char_literal_test() ->
+    TypeDef = {ch, {char, 1, $a}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"enum">> => [$a]}, Schema).
+
+%% Negative integer literal (-1)
+type_to_schema_negative_integer_test() ->
+    TypeDef = {neg, {op, 1, '-', {integer, 1, 1}}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"enum">> => [-1]}, Schema).
+
+%% Positive unary operator (+1)
+type_to_schema_positive_op_test() ->
+    TypeDef = {pos, {op, 1, '+', {integer, 1, 42}}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"integer">>, <<"enum">> => [42]}, Schema).
+
+%% Sized binary <<_:8, _:_*8>>
+type_to_schema_sized_binary_test() ->
+    TypeDef = {data, {type, 1, binary, [{integer, 1, 8}, {integer, 1, 8}]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+%% bitstring()
+type_to_schema_bitstring_test() ->
+    TypeDef = {bits, {type, 1, bitstring, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+%% nonempty_string()
+type_to_schema_nonempty_string_test() ->
+    TypeDef = {name, {type, 1, nonempty_string, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>, <<"minLength">> => 1}, Schema).
+
+%% maybe_improper_list()
+type_to_schema_maybe_improper_list_bare_test() ->
+    TypeDef = {items, {type, 1, maybe_improper_list, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"array">>}, Schema).
+
+%% maybe_improper_list(integer(), nil())
+type_to_schema_maybe_improper_list_typed_test() ->
+    TypeDef = {items, {type, 1, maybe_improper_list, [{type, 1, integer, []}, {type, 1, nil, []}]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"array">>, <<"items">> => #{<<"type">> => <<"integer">>}}, Schema).
+
+%% nonempty_improper_list(integer(), atom())
+type_to_schema_nonempty_improper_list_test() ->
+    TypeDef = {items, {type, 1, nonempty_improper_list, [{type, 1, integer, []}, {type, 1, atom, []}]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(
+        #{<<"type">> => <<"array">>, <<"items">> => #{<<"type">> => <<"integer">>}, <<"minItems">> => 1}, Schema
+    ).
+
+%% nonempty_maybe_improper_list() bare
+type_to_schema_nonempty_maybe_improper_list_bare_test() ->
+    TypeDef = {items, {type, 1, nonempty_maybe_improper_list, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"array">>, <<"minItems">> => 1}, Schema).
+
+%% nonempty_maybe_improper_list(binary(), nil())
+type_to_schema_nonempty_maybe_improper_list_typed_test() ->
+    TypeDef =
+        {items, {type, 1, nonempty_maybe_improper_list, [{type, 1, binary, []}, {type, 1, nil, []}]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(
+        #{<<"type">> => <<"array">>, <<"items">> => #{<<"type">> => <<"string">>}, <<"minItems">> => 1}, Schema
+    ).
+
+%% port()
+type_to_schema_port_type_test() ->
+    TypeDef = {p, {type, 1, port, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+%% reference()
+type_to_schema_reference_type_test() ->
+    TypeDef = {r, {type, 1, reference, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+%% node()
+type_to_schema_node_type_test() ->
+    TypeDef = {n, {type, 1, node, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+%% module()
+type_to_schema_module_type_test() ->
+    TypeDef = {m, {type, 1, module, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+%% identifier()
+type_to_schema_identifier_type_test() ->
+    TypeDef = {id, {type, 1, identifier, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+%% iodata()
+type_to_schema_iodata_type_test() ->
+    TypeDef = {data, {type, 1, iodata, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+%% iolist()
+type_to_schema_iolist_type_test() ->
+    TypeDef = {data, {type, 1, iolist, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
+%% mfa()
+type_to_schema_mfa_type_test() ->
+    TypeDef = {callback, {type, 1, mfa, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"array">>, <<"minItems">> => 3, <<"maxItems">> => 3}, Schema).
+
+%% none()
+type_to_schema_none_type_test() ->
+    TypeDef = {bottom, {type, 1, none, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"not">> => #{}}, Schema).
+
+%% no_return()
+type_to_schema_no_return_type_test() ->
+    TypeDef = {never, {type, 1, no_return, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"not">> => #{}}, Schema).
+
+%% fun()
+type_to_schema_fun_type_test() ->
+    TypeDef = {callback, {type, 1, 'fun', []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{}, Schema).
+
+%% fun((integer()) -> binary())
+type_to_schema_fun_with_args_test() ->
+    TypeDef =
+        {callback,
+            {type, 1, 'fun', [
+                {type, 1, product, [{type, 1, integer, []}]},
+                {type, 1, binary, []}
+            ]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{}, Schema).
+
+%% bounded_fun
+type_to_schema_bounded_fun_test() ->
+    TypeDef = {callback, {type, 1, bounded_fun, [{type, 1, 'fun', []}, []]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{}, Schema).
+
+%% Type variable
+type_to_schema_type_variable_test() ->
+    TypeDef = {generic, {var, 1, 'T'}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{}, Schema).
+
+%% Binary type spec in type position (<<>>)
+type_to_schema_bin_type_test() ->
+    TypeDef = {data, {bin, 0, []}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"string">>}, Schema).
+
 types_to_schemas_empty_list_test() ->
     Schemas = gm_type_schema_converter:types_to_schemas([]),
     ?assertEqual(#{}, Schemas).
