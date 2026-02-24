@@ -282,6 +282,13 @@ type_to_schema_unknown_type_test() ->
     Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
     ?assertEqual(#{<<"type">> => <<"object">>}, Schema).
 
+type_to_schema_record_type_test() ->
+    %% Record type reference should convert to object without warning
+    %% e.g. -type movetaskrec() :: #movetaskrec{}.
+    TypeDef = {movetaskrec, {type, {913, 24}, record, [{atom, {913, 25}, movetaskrec}]}},
+    Schema = gm_type_schema_converter:type_to_schema(TypeDef, []),
+    ?assertEqual(#{<<"type">> => <<"object">>}, Schema).
+
 types_to_schemas_empty_list_test() ->
     Schemas = gm_type_schema_converter:types_to_schemas([]),
     ?assertEqual(#{}, Schemas).
