@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @author Amar Chand <amar.c@greyorange.com>
+%%% @author amarBitMan <https://github.com/amarBitMan>
 %%% @copyright (C) 2025, Grey Orange
 %%%-------------------------------------------------------------------
 -module(gm_type).
