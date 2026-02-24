@@ -460,6 +460,12 @@ convert_type_definition({type, _Line, tuple, Elements}, AllTypes, Visited) when 
         <<"maxItems">> => N
     };
 
+%% Record type reference -> object
+%% Records in type specs appear as {type, Line, record, [{atom, L, RecordName} | Fields]}
+%% Record field definitions aren't available in the type AST, so convert to object
+convert_type_definition({type, _Line, record, [{atom, _, _RecordName} | _]}, _AllTypes, _Visited) ->
+    #{<<"type">> => <<"object">>};
+
 %% Fallback for unknown types
 convert_type_definition(Other, _AllTypes, _Visited) ->
     logger:warning("gm_type_schema_converter: unknown type AST, falling back to object: ~p", [Other]),
